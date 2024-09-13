@@ -1,0 +1,59 @@
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: release ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: 
+          - x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@master
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies
+        working-directory: ./web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend app
+        working-directory: ./web
+        run: pnpm build
+      
+      - name: Setup up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: 1.80.1
+            override: true
+            target: ${{ matrix.target }}
+
+      - name: Build Rust app
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create Release
+        id: create_release
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+
+      - name: Upload Release Assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/comfy-router
+          asset_name: comfy-router-${{ matrix.target }}
+          asset_content_type: application/octet-stream
