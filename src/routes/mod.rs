@@ -9,6 +9,8 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::workflow::record::WorkflowRecordError;
+
 // Create our own JSON extractor by wrapping `axum::Json`. This makes it easy to override the
 // rejection and provide our own which formats errors to match our application.
 //
@@ -29,7 +31,7 @@ where
 pub enum AppError {
     JsonRejection(JsonRejection),
     NotFoundError(anyhow::Error),
-    NoNodeAvailable,
+    TooManyRequests,
     InternalServerError(anyhow::Error),
 }
 
@@ -59,7 +61,7 @@ impl IntoResponse for AppError {
                     "Internal Server Error".to_string(),
                 )
             }
-            AppError::NoNodeAvailable => (
+            AppError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "No node available".to_string(),
             ),
@@ -72,6 +74,14 @@ impl IntoResponse for AppError {
 impl From<JsonRejection> for AppError {
     fn from(rejection: JsonRejection) -> Self {
         Self::JsonRejection(rejection)
+    }
+}
+
+impl From<WorkflowRecordError> for AppError {
+    fn from(error: WorkflowRecordError) -> Self {
+        match error {
+            WorkflowRecordError::PendingQueueFull => Self::TooManyRequests,
+        }
     }
 }
 

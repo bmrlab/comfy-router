@@ -1,17 +1,13 @@
-use crate::{download::state::DownloadState, state::AppState};
-
 use super::{
     message::WorkflowMessage,
     payload::{ComfyUIPrompt, WorkflowPayload},
 };
+use crate::state::AppState;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
@@ -34,55 +30,16 @@ pub enum WorkflowResult {
 #[derive(Clone, Debug)]
 pub struct WorkflowTask {
     id: String,
-    node: Url,
     payload: WorkflowPayload,
     result: Arc<RwLock<WorkflowResult>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct WorkflowRecord {
-    inner: HashMap<String, WorkflowTask>,
-    capacity: usize,
-    order: VecDeque<String>,
-}
-
-impl WorkflowRecord {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: HashMap::new(),
-            capacity,
-            order: VecDeque::new(),
-        }
-    }
-
-    pub fn add(&mut self, task: WorkflowTask) {
-        let task_id = task.id().to_string();
-        if self.inner.contains_key(&task_id) {
-            self.order.retain(|k| k != task_id.as_str());
-        }
-
-        if self.inner.len() == self.capacity {
-            if let Some(oldest_key) = self.order.pop_front() {
-                self.inner.remove(&oldest_key);
-            }
-        }
-
-        self.inner.insert(task_id.clone(), task);
-        self.order.push_back(task_id.clone());
-    }
-
-    pub fn get(&self, id: &str) -> Option<&WorkflowTask> {
-        self.inner.get(id)
-    }
-}
-
 impl WorkflowTask {
-    pub fn new(url: &Url, payload: WorkflowPayload) -> Self {
+    pub fn new(payload: WorkflowPayload) -> Self {
         let result = Arc::new(RwLock::new(WorkflowResult::Pending(0)));
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            node: url.clone(),
             payload,
             result,
         }
@@ -92,18 +49,18 @@ impl WorkflowTask {
         &self.id
     }
 
+    pub fn payload(&self) -> &WorkflowPayload {
+        &self.payload
+    }
+
     pub async fn result(&self) -> WorkflowResult {
         self.result.read().await.clone()
     }
 
-    pub fn node(&self) -> &Url {
-        &self.node
-    }
-
-    async fn trigger_workflow(&self, prompt: &ComfyUIPrompt) -> anyhow::Result<String> {
+    async fn trigger_workflow(&self, node: &Url, prompt: &ComfyUIPrompt) -> anyhow::Result<String> {
         let client = Client::new();
         let response = client
-            .post(self.node.join("/prompt").expect(""))
+            .post(node.join("/prompt").expect(""))
             .json(&json!({
                 "prompt": &prompt.prompt,
                 "client_id": &self.id
@@ -116,9 +73,10 @@ impl WorkflowTask {
         let response_json = response_json
             .as_object()
             .ok_or(anyhow::anyhow!("invalid response: {:?}", response_json))?;
-        let prompt_id = response_json
-            .get("prompt_id")
-            .ok_or(anyhow::anyhow!("cannot find prompt_id: {:?}", response_json))?;
+        let prompt_id = response_json.get("prompt_id").ok_or(anyhow::anyhow!(
+            "cannot find prompt_id: {:?}",
+            response_json
+        ))?;
         let prompt_id = prompt_id
             .as_str()
             .ok_or(anyhow::anyhow!("invalid prompt_id: {:?}", response_json))?;
@@ -127,16 +85,13 @@ impl WorkflowTask {
     }
 
     #[tracing::instrument(skip_all, fields(task_id = self.id))]
-    pub async fn run(&self, download_state: Arc<RwLock<DownloadState>>, app_state: Arc<AppState>) {
-        let prompt = self
-            .payload
-            .into_comfy_prompt(download_state, app_state)
-            .await;
+    pub async fn run(&self, node: &Url, app_state: Arc<AppState>) {
+        let prompt = self.payload.into_comfy_prompt(app_state).await;
 
         tracing::info!("got prompt");
         // establish websocket connection with ComfyUI
         // and update result when new message come in
-        let mut connection_url = self.node.clone().join("/ws").expect("");
+        let mut connection_url = node.join("/ws").expect("");
         let _ = connection_url.set_scheme("ws");
         connection_url.set_query(Some(&format!("clientId={}", &self.id)));
 
@@ -144,9 +99,9 @@ impl WorkflowTask {
             tracing::debug!("task websocket connected");
             tracing::info!("trigger workflow");
 
-            match self.trigger_workflow(&prompt).await {
+            match self.trigger_workflow(node, &prompt).await {
                 Ok(prompt_id) => {
-                    tracing::info!("prompt_id: {}, node: {}", prompt_id, &self.node);
+                    tracing::info!("prompt_id: {}, node: {}", prompt_id, node);
 
                     let mut current_node_id: Option<String> = None;
                     let k_sampler_node_id = prompt.k_sampler_node_id.as_str();

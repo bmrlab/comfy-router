@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import ClusterNode from "@/components/ClusterNode";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,14 +10,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import api from "@/lib/api";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-type NodeStatus = {
+export type NodeStatus = {
   url: string;
   status: {
-    status: "busy" | "idle";
+    status: "busy" | "idle" | "offline";
     cache: object;
   };
 };
@@ -26,34 +27,16 @@ export default function Index() {
   const { data, refetch } = useQuery({
     queryKey: ["nodes"],
     queryFn: async () => {
-      const response = await fetch(
-        import.meta.env.DEV
-          ? "http://localhost:8080/cluster/nodes"
-          : "/cluster/nodes"
-      );
-      const data = (await response.json()) as { nodes: NodeStatus[] };
-      return data;
+      const response = await api.get<{ nodes: NodeStatus[] }>("/cluster/nodes");
+      return response.data;
     },
     refetchInterval: 1000,
   });
 
-  const { mutateAsync } = useMutation({
+  const { mutateAsync: addNode } = useMutation({
     mutationKey: ["add", "node"],
     mutationFn: async (url: string) => {
-      await fetch(
-        import.meta.env.DEV
-          ? "http://localhost:8080/cluster/join"
-          : "/cluster/join",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url,
-          }),
-        }
-      );
+      await api.post("/cluster/nodes", { url });
     },
   });
 
@@ -62,7 +45,7 @@ export default function Index() {
       url: "",
     },
     onSubmit: async ({ value }) => {
-      await mutateAsync(value.url);
+      await addNode(value.url);
       await refetch();
       setOpen(false);
       form.reset();
@@ -125,25 +108,15 @@ export default function Index() {
       </div>
 
       {/* list content */}
-      <div className="pt-8">
+      <div className="pt-8 flex flex-col space-y-8">
         {data?.nodes.map((node) => (
-          <div
+          <ClusterNode
             key={node.url}
-            className="py-4 px-4 flex flex-col w-full border rounded-md border-gray-300"
-          >
-            <div className="">{node.url}</div>
-            <div className="flex items-center justify-start mt-4">
-              <Badge
-                className={
-                  node.status.status === "idle"
-                    ? "bg-green-600"
-                    : "bg-yellow-600"
-                }
-              >
-                {node.status.status}
-              </Badge>
-            </div>
-          </div>
+            {...node}
+            refetch={async () => {
+              await refetch();
+            }}
+          />
         ))}
       </div>
     </div>

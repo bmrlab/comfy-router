@@ -4,9 +4,8 @@ use std::{
 };
 
 use manage::manage_cache;
-use state::DownloadState;
 use task::{run_download_task, DownloadStatus, DownloadTask};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use url::Url;
 
 use crate::state::AppState;
@@ -23,10 +22,10 @@ pub enum CreateDownloadTaskResult {
 pub async fn create_download_task(
     url: &Url,
     target_folder: impl AsRef<Path>,
-    download_state: Arc<RwLock<DownloadState>>,
     app_state: Arc<AppState>,
 ) -> (String, CreateDownloadTaskResult) {
     let existed_task = {
+        let download_state = app_state.download_state();
         let state = download_state.write().await;
         state.get_by_url(&url).await.map(|v| v.clone())
     };
@@ -44,6 +43,7 @@ pub async fn create_download_task(
             let task_status = task.status().clone();
 
             {
+                let download_state = app_state.download_state();
                 let mut state = download_state.write().await;
                 if let Err(e) = state.add(task.clone()).await {
                     tracing::warn!("failed to add download task: {}", e);
@@ -60,8 +60,10 @@ pub async fn create_download_task(
             tokio::spawn(async move {
                 tracing::info!("start download task: {}", task.url());
                 let result = run_download_task(&task, &cache_dir).await;
+                let download_state = app_state.download_state();
 
                 {
+                    
                     let mut state = download_state.write().await;
                     if let Err(e) = state
                         .update_status(

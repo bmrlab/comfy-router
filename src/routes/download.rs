@@ -1,20 +1,16 @@
 use super::{AppError, AppJson};
 use crate::{
     download::{
-        create_download_task, state::DownloadState, task::DownloadStatus, CreateDownloadTaskResult,
+        create_download_task, task::DownloadStatus, CreateDownloadTaskResult,
     },
     state::AppState,
 };
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
-    Extension, Router,
+    routing::{get, post}, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tower::ServiceBuilder;
-use tower_http::add_extension::AddExtensionLayer;
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,15 +25,11 @@ pub struct ResponseDownloadTask {
     pub status: DownloadStatus,
 }
 
-type SharedAppState = Arc<RwLock<DownloadState>>;
-
 pub async fn create(
     State(app_state): State<Arc<AppState>>,
-    Extension(state): Extension<SharedAppState>,
     AppJson(data): AppJson<CreateDownloadTask>,
 ) -> Result<AppJson<ResponseDownloadTask>, AppError> {
-    let (file_id, result) =
-        create_download_task(&data.url, &data.target_folder, state, app_state).await;
+    let (file_id, result) = create_download_task(&data.url, &data.target_folder, app_state).await;
 
     match result {
         CreateDownloadTaskResult::Existed(status) => {
@@ -50,9 +42,10 @@ pub async fn create(
 }
 
 pub async fn get_download_task(
-    Extension(state): Extension<SharedAppState>,
+    State(app_state): State<Arc<AppState>>,
     Path(file_id): Path<String>,
 ) -> Result<AppJson<ResponseDownloadTask>, AppError> {
+    let state = app_state.download_state();
     let state = state.read().await;
     let task = state.get_by_id(&file_id).await;
 
@@ -65,13 +58,8 @@ pub async fn get_download_task(
     }
 }
 
-pub fn download_routes(shared_state: Arc<RwLock<DownloadState>>) -> Router<Arc<AppState>> {
+pub fn download_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", post(create))
         .route("/:file_id", get(get_download_task))
-        .layer(
-            ServiceBuilder::new()
-                .layer(AddExtensionLayer::new(shared_state))
-                .into_inner(),
-        )
 }

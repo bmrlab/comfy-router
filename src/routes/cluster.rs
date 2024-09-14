@@ -2,19 +2,25 @@ use super::{AppError, AppJson};
 use crate::{
     cluster::{NodeState, NodeStatus},
     state::AppState,
+    workflow::record::run_task,
 };
 use axum::{
+    extract::State,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
-use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tower::ServiceBuilder;
-use tower_http::add_extension::AddExtensionLayer;
 use url::Url;
 
+#[cfg(not(debug_assertions))]
+use reqwest::{Client, StatusCode};
+
+#[cfg(not(debug_assertions))]
+use std::{collections::HashMap, time::Duration};
+
+#[cfg(not(debug_assertions))]
 async fn health_check(
     node_state: Arc<RwLock<NodeState>>,
     unhealthy_count: &mut HashMap<Url, usize>,
@@ -82,20 +88,36 @@ pub struct NodesResponse {
 }
 
 pub async fn join(
-    Extension(node_state): Extension<Arc<RwLock<NodeState>>>,
+    State(state): State<Arc<AppState>>,
     AppJson(data): AppJson<RequestUrl>,
 ) -> Result<AppJson<()>, AppError> {
+    let node_state = state.node_state();
     if node_state.read().await.get(&data.url).is_none() {
         let mut node_state = node_state.write().await;
         node_state.add(&data.url);
     }
 
+    // after new node join, safely trigger new task to run
+    tokio::spawn(async move {
+        run_task(state).await;
+    });
+
     Ok(AppJson(()))
 }
 
-pub async fn nodes(
-    Extension(node_state): Extension<Arc<RwLock<NodeState>>>,
-) -> Result<AppJson<NodesResponse>, AppError> {
+pub async fn remove(
+    State(state): State<Arc<AppState>>,
+    AppJson(data): AppJson<RequestUrl>,
+) -> Result<AppJson<()>, AppError> {
+    let node_state = state.node_state();
+    let mut node_state = node_state.write().await;
+    node_state.remove(&data.url);
+
+    Ok(AppJson(()))
+}
+
+pub async fn nodes(State(state): State<Arc<AppState>>) -> Result<AppJson<NodesResponse>, AppError> {
+    let node_state = state.node_state();
     let node_state = node_state.read().await;
 
     Ok(AppJson(NodesResponse {
@@ -109,23 +131,19 @@ pub async fn nodes(
     }))
 }
 
+#[allow(unused_variables)]
 pub fn cluster_routes(node_state: Arc<RwLock<NodeState>>) -> Router<Arc<AppState>> {
-    let node_state_clone = node_state.clone();
-
+    #[cfg(not(debug_assertions))]
     tokio::spawn(async move {
         let mut node_unhealthy_count = HashMap::new();
         loop {
-            health_check(node_state_clone.clone(), &mut node_unhealthy_count).await;
+            health_check(node_state.clone(), &mut node_unhealthy_count).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 
     Router::new()
-        .route("/join", post(join))
+        .route("/nodes", post(join))
         .route("/nodes", get(nodes))
-        .layer(
-            ServiceBuilder::new()
-                .layer(AddExtensionLayer::new(node_state))
-                .into_inner(),
-        )
+        .route("/nodes/delete", post(remove))
 }

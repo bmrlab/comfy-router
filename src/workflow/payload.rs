@@ -1,12 +1,12 @@
 use crate::{
-    download::{create_download_task, state::DownloadState, CreateDownloadTaskResult},
+    download::{create_download_task, CreateDownloadTaskResult},
     state::AppState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
-    sync::{Notify, RwLock},
+    sync::Notify,
     task::JoinSet,
 };
 use url::Url;
@@ -22,14 +22,13 @@ impl Model {
     pub async fn fetch(
         &self,
         target_folder: &str,
-        state: Arc<RwLock<DownloadState>>,
         app_state: Arc<AppState>,
     ) -> (String, Option<Arc<Notify>>) {
         match self {
             Self::BuildIn(name) => (name.to_string(), None),
             Self::Custom(url) => {
                 let (file_name, result) =
-                    create_download_task(&url, target_folder, state, app_state).await;
+                    create_download_task(&url, target_folder, app_state).await;
 
                 match result {
                     CreateDownloadTaskResult::Existed(_) => (file_name, None),
@@ -52,13 +51,12 @@ impl Image {
     pub async fn fetch(
         &self,
         target_folder: &str,
-        state: Arc<RwLock<DownloadState>>,
         app_state: Arc<AppState>,
     ) -> (String, Option<Arc<Notify>>) {
         match self {
             Self::Url(url) => {
                 let (file_name, result) =
-                    create_download_task(&url, target_folder, state, app_state).await;
+                    create_download_task(&url, target_folder, app_state).await;
 
                 match result {
                     CreateDownloadTaskResult::Existed(_) => (file_name, None),
@@ -150,7 +148,6 @@ impl SD15WorkflowPayload {
     #[tracing::instrument(skip_all)]
     pub async fn into_comfy_prompt(
         &self,
-        download_state: Arc<RwLock<DownloadState>>,
         app_state: Arc<AppState>,
     ) -> ComfyUIPrompt {
         let mut prompt = HashMap::<String, Value>::new();
@@ -168,11 +165,7 @@ impl SD15WorkflowPayload {
         let checkpoint_name = {
             let (name, notify) = self
                 .checkpoint
-                .fetch(
-                    "models/checkpoints",
-                    download_state.clone(),
-                    app_state.clone(),
-                )
+                .fetch("models/checkpoints", app_state.clone())
                 .await;
 
             if let Some(notify) = notify {
@@ -199,9 +192,7 @@ impl SD15WorkflowPayload {
             let load_vae_node_id = current_node_id.get();
 
             let vae_name = {
-                let (name, notify) = vae
-                    .fetch("models/vae", download_state.clone(), app_state.clone())
-                    .await;
+                let (name, notify) = vae.fetch("models/vae", app_state.clone()).await;
 
                 if let Some(notify) = notify {
                     join_set.spawn(async move {
@@ -225,10 +216,7 @@ impl SD15WorkflowPayload {
         // loras
         for lora in self.loras.iter() {
             let name = {
-                let (name, notify) = lora
-                    .model
-                    .fetch("models/loras", download_state.clone(), app_state.clone())
-                    .await;
+                let (name, notify) = lora.model.fetch("models/loras", app_state.clone()).await;
 
                 if let Some(notify) = notify {
                     join_set.spawn(async move {
@@ -289,11 +277,7 @@ impl SD15WorkflowPayload {
             let name = {
                 let (name, notify) = controlnet
                     .model
-                    .fetch(
-                        "models/controlnet",
-                        download_state.clone(),
-                        app_state.clone(),
-                    )
+                    .fetch("models/controlnet", app_state.clone())
                     .await;
 
                 if let Some(notify) = notify {
@@ -322,10 +306,7 @@ impl SD15WorkflowPayload {
             let mut preprocessor_node_id = current_node_id.get();
 
             let image_name = {
-                let (name, notify) = controlnet
-                    .image
-                    .fetch("input", download_state.clone(), app_state.clone())
-                    .await;
+                let (name, notify) = controlnet.image.fetch("input", app_state.clone()).await;
 
                 if let Some(notify) = notify {
                     join_set.spawn(async move {
@@ -398,9 +379,7 @@ impl SD15WorkflowPayload {
             Some(image) => {
                 let load_image_node_id = current_node_id.get();
                 let image_name = {
-                    let (name, notify) = image
-                        .fetch("input", download_state.clone(), app_state.clone())
-                        .await;
+                    let (name, notify) = image.fetch("input", app_state.clone()).await;
 
                     if let Some(notify) = notify {
                         join_set.spawn(async move {
@@ -437,9 +416,7 @@ impl SD15WorkflowPayload {
                 if let Some(mask) = &self.input_mask {
                     let load_mask_node_id = current_node_id.get();
                     let mask_name = {
-                        let (name, notify) = mask
-                            .fetch("input", download_state.clone(), app_state.clone())
-                            .await;
+                        let (name, notify) = mask.fetch("input", app_state.clone()).await;
 
                         if let Some(notify) = notify {
                             join_set.spawn(async move {
@@ -606,12 +583,11 @@ impl WorkflowPayload {
 
     pub async fn into_comfy_prompt(
         &self,
-        download_state: Arc<RwLock<DownloadState>>,
         app_state: Arc<AppState>,
     ) -> ComfyUIPrompt {
         match self {
             WorkflowPayload::SD15(payload) => {
-                payload.into_comfy_prompt(download_state, app_state).await
+                payload.into_comfy_prompt(app_state).await
             }
             _ => {
                 todo!()

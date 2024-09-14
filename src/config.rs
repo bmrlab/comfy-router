@@ -7,6 +7,8 @@ pub struct AppConfig {
     pub env: String,
     pub username: String,
     pub password: String,
+    pub workflow_history_limit: usize,
+    pub workflow_pending_limit: usize,
     pub cache_dir: String,
     pub root_dir: String,
     pub record_path: String,
@@ -18,6 +20,15 @@ trait FromEnvWithDefault: Sized {
 }
 
 impl FromEnvWithDefault for u16 {
+    fn from_env_or_default(key: &str, default: Self) -> Self {
+        env::var(key)
+            .ok()
+            .and_then(|val| val.parse().ok())
+            .unwrap_or(default)
+    }
+}
+
+impl FromEnvWithDefault for usize {
     fn from_env_or_default(key: &str, default: Self) -> Self {
         env::var(key)
             .ok()
@@ -56,19 +67,27 @@ where
 impl AppConfig {
     pub fn from_env() -> Self {
         Self {
-            host: String::from_env_or_default("HOST", "0.0.0.0".into()),
-            port: u16::from_env_or_default("PORT", 8080),
-            username: String::from_env_or_default("USERNAME", "admin".into()),
-            password: String::from_env_or_default("PASSWORD", "admin".into()),
-            env: String::from_env_or_default("ENV", "dev".into()),
-            cache_dir: String::from_env_or_default("DOWNLOAD__CACHE_DIR", "/tmp/cache".into()),
-            root_dir: String::from_env_or_default("DOWNLOAD__ROOT_DIR", "/tmp/model".into()),
+            host: String::from_env_or_default("COMFY_ROUTER__HOST", "0.0.0.0".into()),
+            port: u16::from_env_or_default("COMFY_ROUTER__PORT", 8080),
+            username: String::from_env_or_default("COMFY_ROUTER__USERNAME", "admin".into()),
+            password: String::from_env_or_default("COMFY_ROUTER__PASSWORD", "admin".into()),
+            workflow_history_limit: usize::from_env_or_default("COMFY_ROUTER__HISTORY_LIMIT", 50),
+            workflow_pending_limit: usize::from_env_or_default("COMFY_ROUTER__PENDING_LIMIT", 25),
+            env: String::from_env_or_default("COMFY_ROUTER__ENV", "dev".into()),
+            cache_dir: String::from_env_or_default(
+                "COMFY_ROUTER__DOWNLOAD__CACHE_DIR",
+                "/tmp/cache".into(),
+            ),
+            root_dir: String::from_env_or_default(
+                "COMFY_ROUTER__DOWNLOAD__ROOT_DIR",
+                "/tmp/model".into(),
+            ),
             record_path: String::from_env_or_default(
-                "DOWNLOAD__RECORD_PATH",
+                "COMFY_ROUTER__DOWNLOAD__RECORD_PATH",
                 "/tmp/record.json".into(),
             ),
             max_cache_bytes: u64::from_env_or_default(
-                "DOWNLOAD__MAX_CACHE_BYTES",
+                "COMFY_ROUTER__DOWNLOAD__MAX_CACHE_BYTES",
                 1024 * 1024 * 1024 * 64,
             ),
         }

@@ -52,7 +52,11 @@ impl NodeState {
     }
 
     pub fn remove(&mut self, url: &Url) {
-        self.nodes.remove(url);
+        if let Some(status) = self.nodes.get(url) {
+            if status.status != Status::Busy {
+                self.nodes.remove(url);
+            }
+        }
     }
 
     pub fn pick(&mut self, target: &HashMap<String, String>) -> Option<Url> {

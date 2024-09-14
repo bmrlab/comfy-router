@@ -6,14 +6,14 @@ pub mod state;
 mod workflow;
 
 use axum::{extract::Request, routing::get, Router, ServiceExt};
-use axum_embed::ServeEmbed;
-use cluster::NodeState;
-use download::state::DownloadState;
-use routes::{cluster::cluster_routes, download::download_routes, workflow::workflow_routes};
-use rust_embed::RustEmbed;
+use routes::{
+    cluster::cluster_routes,
+    download::download_routes,
+    workflow::{preview_workflow, workflow_routes},
+};
+
 use state::AppState;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
-use tokio::sync::RwLock;
 use tower::{Layer, ServiceBuilder};
 use tower_http::{
     normalize_path::NormalizePathLayer, trace::TraceLayer,
@@ -23,33 +23,35 @@ use tower_http::{
 #[cfg(debug_assertions)]
 use tower_http::cors::{Any, CorsLayer};
 
+#[cfg(not(debug_assertions))]
+use axum_embed::ServeEmbed;
+#[cfg(not(debug_assertions))]
+use rust_embed::RustEmbed;
+
 #[derive(RustEmbed, Clone)]
 #[folder = "web/dist/"]
+#[cfg(not(debug_assertions))]
 struct AdminWebDist;
 
 pub async fn run(app_state: AppState) -> anyhow::Result<()> {
+    #[cfg(not(debug_assertions))]
     let serve_admin_web = ServeEmbed::<AdminWebDist>::new();
 
     let config = app_state.config().clone();
 
-    let download_state = DownloadState::new(&config.record_path).await;
-    let download_state = Arc::new(RwLock::new(download_state));
-    let node_state = NodeState::new();
-    let node_state = Arc::new(RwLock::new(node_state));
-
-    // TODO here is a little stupid to pass auth layer to routes
-    // but workflow_route has different auth requirement for each api
     let auth_layer = ValidateRequestHeaderLayer::basic(&config.username, &config.password);
 
     let app = Router::new()
-        .nest("/download", download_routes(download_state.clone()))
-        .nest("/cluster", cluster_routes(node_state.clone()))
-        .nest_service("/admin", serve_admin_web)
-        .layer(auth_layer.clone())
-        .nest(
-            "/workflow",
-            workflow_routes(node_state.clone(), download_state, auth_layer),
-        )
+        .nest("/download", download_routes())
+        .nest("/cluster", cluster_routes(app_state.node_state()));
+
+    #[cfg(not(debug_assertions))]
+    let app = app.nest_service("/admin", serve_admin_web);
+
+    let app = app
+        .nest("/workflow", workflow_routes())
+        .layer(auth_layer)
+        .route("/preview/:id", get(preview_workflow))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -59,7 +61,12 @@ pub async fn run(app_state: AppState) -> anyhow::Result<()> {
         .route("/health_check", get(routes::health_check));
 
     #[cfg(debug_assertions)]
-    let app = app.layer(CorsLayer::new().allow_headers(Any).allow_origin(Any));
+    let app = app.layer(
+        CorsLayer::new()
+            .allow_headers(Any)
+            .allow_origin(Any)
+            .allow_methods(Any),
+    );
 
     let app = NormalizePathLayer::trim_trailing_slash().layer(app);
 
