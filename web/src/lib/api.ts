@@ -6,14 +6,16 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    const username = "admin";
-    const password = "admin";
+    if (import.meta.env.DEV) {
+      const username = "admin";
+      const password = "admin";
 
-    // Encode credentials in base64
-    const token = btoa(`${username}:${password}`);
+      // Encode credentials in base64
+      const token = btoa(`${username}:${password}`);
 
-    // Set Authorization header
-    config.headers["Authorization"] = `Basic ${token}`;
+      // Set Authorization header
+      config.headers["Authorization"] = `Basic ${token}`;
+    }
 
     return config;
   },
