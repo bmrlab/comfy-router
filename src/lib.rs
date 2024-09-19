@@ -15,13 +15,11 @@ use routes::{
 use state::AppState;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tower::{Layer, ServiceBuilder};
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::{
     normalize_path::NormalizePathLayer, trace::TraceLayer,
     validate_request::ValidateRequestHeaderLayer,
 };
-
-#[cfg(debug_assertions)]
-use tower_http::cors::{Any, CorsLayer};
 
 #[cfg(not(debug_assertions))]
 use axum_embed::ServeEmbed;
@@ -39,26 +37,38 @@ pub async fn run(app_state: AppState) -> anyhow::Result<()> {
 
     let config = app_state.config().clone();
 
-    let auth_layer = ValidateRequestHeaderLayer::basic(&config.username, &config.password);
-
-    let app = Router::new()
+    let auth_routes = Router::new()
         .nest("/download", download_routes())
-        .nest("/cluster", cluster_routes(app_state.node_state()));
+        .nest("/cluster", cluster_routes(app_state.node_state()))
+        .nest("/workflow", workflow_routes());
 
     #[cfg(not(debug_assertions))]
-    let app = app.nest_service("/admin", serve_admin_web);
+    let auth_routes = auth_routes.nest_service("/admin", serve_admin_web);
 
-    let app = app
-        .nest("/workflow", workflow_routes())
-        .layer(auth_layer)
+    let auth_routes = auth_routes.layer(ValidateRequestHeaderLayer::basic(
+        &config.username,
+        &config.password,
+    ));
+
+    let preview_route = Router::new()
         .route("/preview/:id", get(preview_workflow))
+        .layer(
+            CorsLayer::new()
+                .allow_headers(Any)
+                .allow_origin(Any)
+                .allow_methods(Any),
+        );
+
+    let app = Router::new()
+        .merge(auth_routes)
+        .merge(preview_route)
+        .route("/health_check", get(routes::health_check))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .into_inner(),
         )
-        .with_state(Arc::new(app_state))
-        .route("/health_check", get(routes::health_check));
+        .with_state(Arc::new(app_state));
 
     #[cfg(debug_assertions)]
     let app = app.layer(
