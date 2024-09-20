@@ -1,92 +1,8 @@
-use crate::{
-    download::{create_download_task, CreateDownloadTaskResult},
-    state::AppState,
-};
+use super::{ComfyUIPrompt, ControlNetPayload, CurrentNodeId, Image, LoRAPayload, Model};
+use crate::workflow::fetch::FetchHelper;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
-use tokio::{
-    sync::Notify,
-    task::JoinSet,
-};
-use url::Url;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "name")]
-enum Model {
-    BuildIn(String),
-    Custom(Url),
-}
-
-impl Model {
-    pub async fn fetch(
-        &self,
-        target_folder: &str,
-        app_state: Arc<AppState>,
-    ) -> (String, Option<Arc<Notify>>) {
-        match self {
-            Self::BuildIn(name) => (name.to_string(), None),
-            Self::Custom(url) => {
-                let (file_name, result) =
-                    create_download_task(&url, target_folder, app_state).await;
-
-                match result {
-                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
-                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type", content = "content")]
-enum Image {
-    /// not support for now
-    Base64(String),
-    Url(Url),
-}
-
-impl Image {
-    pub async fn fetch(
-        &self,
-        target_folder: &str,
-        app_state: Arc<AppState>,
-    ) -> (String, Option<Arc<Notify>>) {
-        match self {
-            Self::Url(url) => {
-                let (file_name, result) =
-                    create_download_task(&url, target_folder, app_state).await;
-
-                match result {
-                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
-                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
-                }
-            }
-            _ => {
-                todo!()
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ControlNetPayload {
-    model: Model,
-    weight: f32,
-    start_at: f32,
-    end_at: f32,
-    preprocessor: Option<String>,
-    image: Image,
-    resize_mode: String,
-    preprocessor_params: Option<Value>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LoRAPayload {
-    model: Model,
-    weight: f32,
-}
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SD15WorkflowPayload {
@@ -98,6 +14,7 @@ pub struct SD15WorkflowPayload {
     negative_prompt: String,
     input_image: Option<Image>,
     input_mask: Option<Image>,
+    denoise: Option<f32>,
     width: u32,
     height: u32,
     batch_size: u32,
@@ -108,51 +25,13 @@ pub struct SD15WorkflowPayload {
     seed: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SDXLWorkflowPayload {}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FluxWorkflowPayload {}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "params")]
-pub enum WorkflowPayload {
-    SD15(SD15WorkflowPayload),
-    SDXL(SDXLWorkflowPayload),
-    Flux(FluxWorkflowPayload),
-}
-
-#[derive(Clone, Debug)]
-pub struct ComfyUIPrompt {
-    pub prompt: Value,
-    pub k_sampler_node_id: String,
-    pub output_node_id: String,
-}
-
-struct CurrentNodeId {
-    inner: u32,
-}
-
-impl CurrentNodeId {
-    fn new() -> Self {
-        Self { inner: 2 }
-    }
-
-    fn get(&mut self) -> String {
-        self.inner += 1;
-        self.inner.to_string()
-    }
-}
-
 impl SD15WorkflowPayload {
     #[tracing::instrument(skip_all)]
-    pub async fn into_comfy_prompt(
-        &self,
-        app_state: Arc<AppState>,
-    ) -> ComfyUIPrompt {
+    pub async fn into_comfy_prompt(&self, fetch_helper: FetchHelper) -> ComfyUIPrompt {
+        let mut fetch_helper = fetch_helper;
+
         let mut prompt = HashMap::<String, Value>::new();
         let mut current_node_id = CurrentNodeId::new();
-        let mut join_set = JoinSet::new();
 
         let mut unet_node;
         let mut clip_node;
@@ -162,20 +41,9 @@ impl SD15WorkflowPayload {
 
         // checkpoint
         let load_checkpoint_node_id = current_node_id.get();
-        let checkpoint_name = {
-            let (name, notify) = self
-                .checkpoint
-                .fetch("models/checkpoints", app_state.clone())
-                .await;
-
-            if let Some(notify) = notify {
-                join_set.spawn(async move {
-                    notify.notified().await;
-                });
-            }
-
-            name
-        };
+        let checkpoint_name = fetch_helper
+            .add(&self.checkpoint, "models/checkpoints")
+            .await;
         prompt.insert(
             load_checkpoint_node_id.clone(),
             json!({
@@ -190,18 +58,7 @@ impl SD15WorkflowPayload {
         // vae
         if let Some(vae) = &self.vae {
             let load_vae_node_id = current_node_id.get();
-
-            let vae_name = {
-                let (name, notify) = vae.fetch("models/vae", app_state.clone()).await;
-
-                if let Some(notify) = notify {
-                    join_set.spawn(async move {
-                        notify.notified().await;
-                    });
-                }
-
-                name
-            };
+            let vae_name = fetch_helper.add(vae, "models/vae").await;
 
             prompt.insert(
                 load_checkpoint_node_id.clone(),
@@ -215,17 +72,7 @@ impl SD15WorkflowPayload {
 
         // loras
         for lora in self.loras.iter() {
-            let name = {
-                let (name, notify) = lora.model.fetch("models/loras", app_state.clone()).await;
-
-                if let Some(notify) = notify {
-                    join_set.spawn(async move {
-                        notify.notified().await;
-                    });
-                }
-
-                name
-            };
+            let name = fetch_helper.add(&lora.model, "models/loras").await;
 
             let current_lora_node_id = current_node_id.get();
             prompt.insert(
@@ -273,21 +120,9 @@ impl SD15WorkflowPayload {
         // controlnets
         for controlnet in self.controlnets.iter() {
             let load_controlnet_node_id = current_node_id.get();
-
-            let name = {
-                let (name, notify) = controlnet
-                    .model
-                    .fetch("models/controlnet", app_state.clone())
-                    .await;
-
-                if let Some(notify) = notify {
-                    join_set.spawn(async move {
-                        notify.notified().await;
-                    });
-                }
-
-                name
-            };
+            let name = fetch_helper
+                .add(&controlnet.model, "models/controlnet")
+                .await;
 
             prompt.insert(
                 load_controlnet_node_id.clone(),
@@ -305,17 +140,7 @@ impl SD15WorkflowPayload {
             let resize_node_id = current_node_id.get();
             let mut preprocessor_node_id = current_node_id.get();
 
-            let image_name = {
-                let (name, notify) = controlnet.image.fetch("input", app_state.clone()).await;
-
-                if let Some(notify) = notify {
-                    join_set.spawn(async move {
-                        notify.notified().await;
-                    });
-                }
-
-                name
-            };
+            let image_name = fetch_helper.add(&controlnet.image, "input").await;
             prompt.insert(
                 load_image_node_id.clone(),
                 json!({
@@ -378,17 +203,7 @@ impl SD15WorkflowPayload {
         let (latent_image_node, denoise) = match &self.input_image {
             Some(image) => {
                 let load_image_node_id = current_node_id.get();
-                let image_name = {
-                    let (name, notify) = image.fetch("input", app_state.clone()).await;
-
-                    if let Some(notify) = notify {
-                        join_set.spawn(async move {
-                            notify.notified().await;
-                        });
-                    }
-
-                    name
-                };
+                let image_name = fetch_helper.add(image, "input").await;
                 prompt.insert(
                     load_image_node_id.clone(),
                     json!({
@@ -415,17 +230,7 @@ impl SD15WorkflowPayload {
 
                 if let Some(mask) = &self.input_mask {
                     let load_mask_node_id = current_node_id.get();
-                    let mask_name = {
-                        let (name, notify) = mask.fetch("input", app_state.clone()).await;
-
-                        if let Some(notify) = notify {
-                            join_set.spawn(async move {
-                                notify.notified().await;
-                            });
-                        }
-
-                        name
-                    };
+                    let mask_name = fetch_helper.add(mask, "input").await;
                     prompt.insert(
                         load_mask_node_id.clone(),
                         json!({
@@ -479,8 +284,7 @@ impl SD15WorkflowPayload {
                             "class_type": "VAEEncodeForInpaint"
                         }),
                     );
-                    // TODO denoise should be passed in
-                    ((vae_encode_node_id, 0), 0.6)
+                    ((vae_encode_node_id, 0), self.denoise.unwrap_or(0.75))
                 }
             }
             _ => {
@@ -565,33 +369,12 @@ impl SD15WorkflowPayload {
 
         tracing::debug!("comfyui prompt: {:?}", json!(prompt).to_string());
 
-        // wait for all download task
-        join_set.join_all().await;
+        fetch_helper.wait_all().await;
 
         ComfyUIPrompt {
             prompt: json!(prompt),
             k_sampler_node_id: k_sampler_node_id.clone(),
             output_node_id: output_node_id.clone(),
-        }
-    }
-}
-
-impl WorkflowPayload {
-    pub fn cache_map(&self) -> HashMap<String, String> {
-        HashMap::new()
-    }
-
-    pub async fn into_comfy_prompt(
-        &self,
-        app_state: Arc<AppState>,
-    ) -> ComfyUIPrompt {
-        match self {
-            WorkflowPayload::SD15(payload) => {
-                payload.into_comfy_prompt(app_state).await
-            }
-            _ => {
-                todo!()
-            }
         }
     }
 }

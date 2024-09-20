@@ -1,0 +1,145 @@
+mod flux;
+mod sd15;
+mod sdxl;
+
+use super::fetch::{Fetch, FetchHelper};
+use crate::{
+    download::{create_download_task, CreateDownloadTaskResult},
+    state::AppState,
+};
+use flux::FluxWorkflowPayload;
+use sd15::SD15WorkflowPayload;
+use sdxl::SDXLWorkflowPayload;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Notify;
+use url::Url;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", content = "name")]
+enum Model {
+    BuildIn(String),
+    Custom(Url),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", content = "content")]
+enum Image {
+    /// not support for now
+    Base64(String),
+    Url(Url),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ControlNetPayload {
+    model: Model,
+    weight: f32,
+    start_at: f32,
+    end_at: f32,
+    preprocessor: Option<String>,
+    image: Image,
+    resize_mode: String,
+    preprocessor_params: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LoRAPayload {
+    model: Model,
+    weight: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComfyUIPrompt {
+    pub prompt: Value,
+    pub k_sampler_node_id: String,
+    pub output_node_id: String,
+}
+
+pub struct CurrentNodeId {
+    inner: u32,
+}
+
+impl CurrentNodeId {
+    fn new() -> Self {
+        Self { inner: 2 }
+    }
+
+    fn get(&mut self) -> String {
+        self.inner += 1;
+        self.inner.to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "params")]
+pub enum WorkflowPayload {
+    SD15(SD15WorkflowPayload),
+    SDXL(SDXLWorkflowPayload),
+    Flux(FluxWorkflowPayload),
+}
+
+impl WorkflowPayload {
+    pub fn cache_map(&self) -> HashMap<String, String> {
+        HashMap::new()
+    }
+}
+
+impl Fetch for &Model {
+    async fn fetch(
+        &self,
+        target_folder: &str,
+        app_state: Arc<AppState>,
+    ) -> (String, Option<Arc<Notify>>) {
+        match self {
+            Model::BuildIn(name) => (name.to_string(), None),
+            Model::Custom(url) => {
+                let (file_name, result) =
+                    create_download_task(&url, target_folder, app_state).await;
+
+                match result {
+                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
+                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
+                }
+            }
+        }
+    }
+}
+
+impl Fetch for &Image {
+    async fn fetch(
+        &self,
+        target_folder: &str,
+        app_state: Arc<AppState>,
+    ) -> (String, Option<Arc<Notify>>) {
+        match self {
+            Image::Url(url) => {
+                let (file_name, result) =
+                    create_download_task(&url, target_folder, app_state).await;
+
+                match result {
+                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
+                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
+                }
+            }
+            _ => {
+                todo!()
+            }
+        }
+    }
+}
+
+pub async fn generate_comfy_prompt(
+    payload: &WorkflowPayload,
+    app_state: Arc<AppState>,
+) -> ComfyUIPrompt {
+    let fetch_helper = FetchHelper::new(app_state.clone());
+
+    match payload {
+        WorkflowPayload::SD15(payload) => payload.into_comfy_prompt(fetch_helper).await,
+        WorkflowPayload::Flux(payload) => payload.into_comfy_prompt(fetch_helper).await,
+        _ => {
+            todo!()
+        }
+    }
+}

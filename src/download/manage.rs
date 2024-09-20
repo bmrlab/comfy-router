@@ -48,15 +48,25 @@ pub async fn manage_cache(
             );
 
             let file_size = metadata.size();
-            tokio::fs::remove_file(oldest_file.path()).await?;
+            // If delete failed, just continue with warning
+            if let Err(e) = tokio::fs::remove_file(oldest_file.path()).await {
+                tracing::warn!(
+                    "failed to delete cache file {}: {}",
+                    oldest_file.path().display(),
+                    e
+                );
+            }
             current_size -= file_size;
 
             // Remove the corresponding download entry and symlink
             let file_id = oldest_file.file_name().to_string_lossy().into_owned();
             let mut state = download_state.write().await;
             if let Ok(Some(download)) = state.remove(&file_id).await {
-                tokio::fs::remove_file(PathBuf::from(download.target_folder()).join(&file_id))
-                    .await?;
+                let symlink_path = PathBuf::from(download.target_folder()).join(&file_id);
+
+                if let Err(e) = tokio::fs::remove_file(&symlink_path).await {
+                    tracing::warn!("failed to remove symlink {}: {}", symlink_path.display(), e);
+                }
             }
         }
     }

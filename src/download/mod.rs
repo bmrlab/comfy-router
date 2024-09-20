@@ -1,18 +1,16 @@
+pub mod manage;
+pub mod state;
+pub mod task;
+
+use crate::state::AppState;
+use manage::manage_cache;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-
-use manage::manage_cache;
 use task::{run_download_task, DownloadStatus, DownloadTask};
 use tokio::sync::Notify;
 use url::Url;
-
-use crate::state::AppState;
-
-pub mod manage;
-pub mod state;
-pub mod task;
 
 pub enum CreateDownloadTaskResult {
     Existed(DownloadStatus),
@@ -63,7 +61,6 @@ pub async fn create_download_task(
                 let download_state = app_state.download_state();
 
                 {
-                    
                     let mut state = download_state.write().await;
                     if let Err(e) = state
                         .update_status(

@@ -2,14 +2,13 @@ pub mod cluster;
 pub mod download;
 pub mod workflow;
 
+use crate::workflow::record::WorkflowRecordError;
 use axum::{
     extract::{rejection::JsonRejection, FromRequest},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
-
-use crate::workflow::record::WorkflowRecordError;
 
 // Create our own JSON extractor by wrapping `axum::Json`. This makes it easy to override the
 // rejection and provide our own which formats errors to match our application.
