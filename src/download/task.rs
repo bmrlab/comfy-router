@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadStatus {
     Pending,
@@ -15,57 +15,15 @@ pub enum DownloadStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DownloadTask {
-    // the url used to identify the file, without any search parameters
+    /// The URL used to identify the file, without any search parameters.
     url: Url,
     downloadable_url: Url,
-    target_folder: String,
     status: DownloadStatus,
     file_id: String,
 }
 
-pub async fn run_download_task(
-    task: &DownloadTask,
-    cache_dir: impl AsRef<Path>,
-) -> anyhow::Result<()> {
-    tracing::debug!("task started {}", &task.file_id);
-
-    let cache_path = PathBuf::from(cache_dir.as_ref()).join(task.file_id());
-    let target_path = PathBuf::from(task.target_folder()).join(task.file_id());
-
-    tokio::fs::create_dir_all(&cache_path.parent().expect("cache path should have parent")).await?;
-    tokio::fs::create_dir_all(
-        &target_path
-            .parent()
-            .expect("target path should have parent"),
-    )
-    .await?;
-
-    let client = Client::new();
-    let res = client.get(task.downloadable_url().clone()).send().await?;
-    let total_size = res.content_length().unwrap_or(0);
-
-    let mut file = tokio::fs::File::create(&cache_path).await?;
-    let mut downloaded: u64 = 0;
-    let mut stream = res.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-        file.write_all(&chunk).await?;
-        let new = std::cmp::min(downloaded + (chunk.len() as u64), total_size);
-        downloaded = new;
-    }
-
-    file.flush().await?;
-
-    tokio::fs::symlink(&cache_path, &target_path).await?;
-
-    tracing::debug!("task completed {}", &task.file_id);
-
-    Ok(())
-}
-
 impl DownloadTask {
-    pub fn new(url: &Url, target_folder: &str) -> Self {
+    pub fn new(url: &Url) -> Self {
         let mut file_id = uuid::Uuid::new_v4().to_string();
 
         // preserve the file extension if any
@@ -85,18 +43,47 @@ impl DownloadTask {
         Self {
             url,
             downloadable_url,
-            target_folder: target_folder.to_string(),
             status: DownloadStatus::Pending,
             file_id,
         }
     }
 
-    pub fn url(&self) -> &Url {
-        &self.url
+    #[tracing::instrument(skip_all, fields(file_id = self.file_id))]
+    pub async fn run(&self, cache_dir: impl AsRef<Path>) -> anyhow::Result<()> {
+        tracing::info!("task started {}", &self.file_id);
+
+        let cache_path = cache_dir.as_ref().to_path_buf().join(self.file_id());
+        let download_path = cache_path.with_extension("download");
+
+        if let Some(parent) = cache_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let client = Client::new();
+        let res = client.get(self.downloadable_url().clone()).send().await?;
+        let total_size = res.content_length().unwrap_or(0);
+
+        let mut file = tokio::fs::File::create(&download_path).await?;
+        let mut downloaded: u64 = 0;
+        let mut stream = res.bytes_stream();
+
+        while let Some(item) = stream.next().await {
+            let chunk = item?;
+            file.write_all(&chunk).await?;
+            let new = std::cmp::min(downloaded + (chunk.len() as u64), total_size);
+            downloaded = new;
+        }
+
+        file.flush().await?;
+        tokio::fs::rename(&download_path, &cache_path).await?;
+
+        tracing::debug!("task completed {}", self.file_id());
+
+        Ok(())
     }
 
-    pub fn target_folder(&self) -> &str {
-        &self.target_folder
+    pub fn url(&self) -> &Url {
+        &self.url
     }
 
     pub fn status(&self) -> &DownloadStatus {

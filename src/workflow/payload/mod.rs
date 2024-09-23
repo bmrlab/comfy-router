@@ -4,7 +4,7 @@ mod sdxl;
 
 use super::fetch::{Fetch, FetchHelper};
 use crate::{
-    download::{create_download_task, CreateDownloadTaskResult},
+    download::{create_download_task, task::DownloadStatus, CreateDownloadTaskResult},
     state::AppState,
 };
 use flux::FluxWorkflowPayload;
@@ -13,7 +13,7 @@ use sdxl::SDXLWorkflowPayload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Notify;
+use tokio::sync::watch;
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,18 +88,18 @@ impl WorkflowPayload {
 impl Fetch for &Model {
     async fn fetch(
         &self,
-        target_folder: &str,
         app_state: Arc<AppState>,
-    ) -> (String, Option<Arc<Notify>>) {
+        target_folder: &str,
+    ) -> (String, Option<watch::Receiver<DownloadStatus>>) {
         match self {
             Model::BuildIn(name) => (name.to_string(), None),
             Model::Custom(url) => {
                 let (file_name, result) =
-                    create_download_task(&url, target_folder, app_state).await;
+                    create_download_task(&url, target_folder, app_state.download_state()).await;
 
                 match result {
-                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
-                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
+                    CreateDownloadTaskResult::Existed => (file_name, None),
+                    CreateDownloadTaskResult::Created(rx) => (file_name, Some(rx)),
                 }
             }
         }
@@ -109,17 +109,17 @@ impl Fetch for &Model {
 impl Fetch for &Image {
     async fn fetch(
         &self,
-        target_folder: &str,
         app_state: Arc<AppState>,
-    ) -> (String, Option<Arc<Notify>>) {
+        target_folder: &str,
+    ) -> (String, Option<watch::Receiver<DownloadStatus>>) {
         match self {
             Image::Url(url) => {
                 let (file_name, result) =
-                    create_download_task(&url, target_folder, app_state).await;
+                    create_download_task(&url, target_folder, app_state.download_state()).await;
 
                 match result {
-                    CreateDownloadTaskResult::Existed(_) => (file_name, None),
-                    CreateDownloadTaskResult::Created(_, notify) => (file_name, Some(notify)),
+                    CreateDownloadTaskResult::Existed => (file_name, None),
+                    CreateDownloadTaskResult::Created(rx) => (file_name, Some(rx)),
                 }
             }
             _ => {
@@ -132,7 +132,7 @@ impl Fetch for &Image {
 pub async fn generate_comfy_prompt(
     payload: &WorkflowPayload,
     app_state: Arc<AppState>,
-) -> ComfyUIPrompt {
+) -> anyhow::Result<ComfyUIPrompt> {
     let fetch_helper = FetchHelper::new(app_state.clone());
 
     match payload {

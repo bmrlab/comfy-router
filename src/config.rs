@@ -1,4 +1,4 @@
-use std::{env, str::FromStr};
+use std::{env, path::PathBuf, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -9,9 +9,9 @@ pub struct AppConfig {
     pub password: String,
     pub workflow_history_limit: usize,
     pub workflow_pending_limit: usize,
-    pub cache_dir: String,
-    pub root_dir: String,
-    pub record_path: String,
+    pub cache_dir: PathBuf,
+    pub root_dir: PathBuf,
+    pub record_path: PathBuf,
     pub max_cache_bytes: u64,
 }
 
@@ -77,15 +77,18 @@ impl AppConfig {
             cache_dir: String::from_env_or_default(
                 "COMFY_ROUTER__DOWNLOAD__CACHE_DIR",
                 "/tmp/cache".into(),
-            ),
+            )
+            .into(),
             root_dir: String::from_env_or_default(
                 "COMFY_ROUTER__DOWNLOAD__ROOT_DIR",
                 "/tmp/model".into(),
-            ),
+            )
+            .into(),
             record_path: String::from_env_or_default(
                 "COMFY_ROUTER__DOWNLOAD__RECORD_PATH",
                 "/tmp/record.json".into(),
-            ),
+            )
+            .into(),
             max_cache_bytes: u64::from_env_or_default(
                 "COMFY_ROUTER__DOWNLOAD__MAX_CACHE_BYTES",
                 1024 * 1024 * 1024 * 64,

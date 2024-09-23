@@ -1,5 +1,4 @@
 pub mod cluster;
-pub mod download;
 pub mod workflow;
 
 use crate::workflow::record::WorkflowRecordError;

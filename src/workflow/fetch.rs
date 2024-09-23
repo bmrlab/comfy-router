@@ -1,19 +1,17 @@
+use crate::{download::task::DownloadStatus, state::AppState};
 use std::sync::Arc;
-
-use tokio::{sync::Notify, task::JoinSet};
-
-use crate::state::AppState;
+use tokio::{sync::watch, task::JoinSet};
 
 pub trait Fetch {
     fn fetch(
         &self,
-        target_folder: &str,
         app_state: Arc<AppState>,
-    ) -> impl std::future::Future<Output = (String, Option<Arc<Notify>>)> + Send;
+        target_folder: &str,
+    ) -> impl std::future::Future<Output = (String, Option<watch::Receiver<DownloadStatus>>)> + Send;
 }
 
 pub struct FetchHelper {
-    join_set: JoinSet<()>,
+    join_set: JoinSet<DownloadStatus>,
     app_state: Arc<AppState>,
 }
 
@@ -30,11 +28,24 @@ impl FetchHelper {
     /// in the background, which will not block this function.
     /// Use `wait_all` to wait for all triggered download task.
     pub async fn add(&mut self, artifact: impl Fetch, target_folder: &str) -> String {
-        let (name, notify) = artifact.fetch(target_folder, self.app_state.clone()).await;
+        let (name, rx) = artifact.fetch(self.app_state.clone(), target_folder).await;
 
-        if let Some(notify) = notify {
+        if let Some(mut rx) = rx {
             self.join_set.spawn(async move {
-                notify.notified().await;
+                loop {
+                    if rx.changed().await.is_err() {
+                        break;
+                    }
+
+                    let status = rx.borrow();
+                    match &*status {
+                        DownloadStatus::Completed => break,
+                        DownloadStatus::Failed => break,
+                        _ => {}
+                    }
+                }
+
+                rx.borrow().clone()
             });
         }
 
@@ -42,7 +53,14 @@ impl FetchHelper {
     }
 
     /// Wait for all download task added by `add` to finish.
-    pub async fn wait_all(self) {
-        self.join_set.join_all().await;
+    /// If any task failed, this function will return an error.
+    pub async fn wait_all(self) -> anyhow::Result<()> {
+        let results = self.join_set.join_all().await;
+
+        if results.iter().any(|v| *v != DownloadStatus::Completed) {
+            anyhow::bail!("download failed");
+        } else {
+            Ok(())
+        }
     }
 }

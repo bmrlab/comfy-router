@@ -1,16 +1,9 @@
 use super::state::DownloadState;
-use std::{
-    os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{os::unix::fs::MetadataExt, sync::Arc};
 use tokio::sync::RwLock;
 
-pub async fn manage_cache(
-    cache_dir: impl AsRef<Path>,
-    download_state: Arc<RwLock<DownloadState>>,
-    max_cache_bytes: u64,
-) -> anyhow::Result<()> {
+pub async fn manage_cache(download_state: Arc<RwLock<DownloadState>>) -> anyhow::Result<()> {
+    let cache_dir = download_state.read().await.cache_dir().clone();
     let mut read_dir = tokio::fs::read_dir(cache_dir).await?;
     let mut files = vec![];
 
@@ -39,6 +32,7 @@ pub async fn manage_cache(
     }
 
     // Remove oldest files if cache size exceeds the limit
+    let max_cache_bytes = download_state.read().await.max_cache_bytes();
     while current_size > max_cache_bytes && !files_with_info.is_empty() {
         if let Some((oldest_file, metadata, _)) = files_with_info.pop() {
             tracing::info!(
@@ -58,14 +52,16 @@ pub async fn manage_cache(
             }
             current_size -= file_size;
 
-            // Remove the corresponding download entry and symlink
+            // Remove the corresponding download entry
             let file_id = oldest_file.file_name().to_string_lossy().into_owned();
             let mut state = download_state.write().await;
-            if let Ok(Some(download)) = state.remove(&file_id).await {
-                let symlink_path = PathBuf::from(download.target_folder()).join(&file_id);
+            let _ = state.remove(&file_id).await;
 
-                if let Err(e) = tokio::fs::remove_file(&symlink_path).await {
-                    tracing::warn!("failed to remove symlink {}: {}", symlink_path.display(), e);
+            // Remove symlinks
+            if let Some(target_dirs) = state.remove_target_dirs(&file_id) {
+                for target_dir in target_dirs {
+                    let target_path = state.root_dir().join(target_dir).join(&file_id);
+                    let _ = tokio::fs::remove_dir_all(target_path).await;
                 }
             }
         }

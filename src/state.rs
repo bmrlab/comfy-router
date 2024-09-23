@@ -15,7 +15,13 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Self {
-        let download_state = DownloadState::new(&config.record_path).await;
+        let download_state = DownloadState::new(
+            &config.record_path,
+            &config.root_dir,
+            &config.cache_dir,
+            config.max_cache_bytes,
+        )
+        .await;
         let node_state = NodeState::new();
 
         // TODO make record resizable according to node list size

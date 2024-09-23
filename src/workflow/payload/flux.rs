@@ -38,7 +38,10 @@ pub struct FluxWorkflowPayload {
 
 impl FluxWorkflowPayload {
     #[tracing::instrument(skip_all)]
-    pub async fn into_comfy_prompt(&self, fetch_helper: FetchHelper) -> ComfyUIPrompt {
+    pub async fn into_comfy_prompt(
+        &self,
+        fetch_helper: FetchHelper,
+    ) -> anyhow::Result<ComfyUIPrompt> {
         let mut fetch_helper = fetch_helper;
 
         let mut prompt = HashMap::<String, Value>::new();
@@ -407,12 +410,12 @@ impl FluxWorkflowPayload {
 
         tracing::debug!("comfyui prompt: {:?}", json!(prompt).to_string());
 
-        fetch_helper.wait_all().await;
+        fetch_helper.wait_all().await?;
 
-        ComfyUIPrompt {
+        Ok(ComfyUIPrompt {
             prompt: json!(prompt),
             k_sampler_node_id: k_sampler_node_id.clone(),
             output_node_id: output_node_id.clone(),
-        }
+        })
     }
 }

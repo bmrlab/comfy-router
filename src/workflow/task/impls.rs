@@ -35,17 +35,23 @@ impl WorkflowTask {
 
     #[tracing::instrument(skip_all, fields(task_id = self.id))]
     pub async fn run(&self, node: &Url, app_state: Arc<AppState>) {
-        let prompt = generate_comfy_prompt(&self.payload, app_state).await;
+        match generate_comfy_prompt(&self.payload, app_state).await {
+            Ok(prompt) => {
+                tracing::info!("got prompt");
 
-        tracing::info!("got prompt");
-
-        let mut executor = TaskExecutor::new(prompt, self.result.clone(), self.id());
-        match executor.run(node).await {
+                let mut executor = TaskExecutor::new(prompt, self.result.clone(), self.id());
+                match executor.run(node).await {
+                    Err(e) => {
+                        let mut result = self.result.write().await;
+                        *result = WorkflowResult::Error(e.to_string());
+                    }
+                    _ => {}
+                }
+            }
             Err(e) => {
                 let mut result = self.result.write().await;
                 *result = WorkflowResult::Error(e.to_string());
             }
-            _ => {}
         }
     }
 }

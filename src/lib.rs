@@ -8,7 +8,6 @@ mod workflow;
 use axum::{extract::Request, routing::get, Router, ServiceExt};
 use routes::{
     cluster::cluster_routes,
-    download::download_routes,
     workflow::{preview_workflow, workflow_routes},
 };
 
@@ -38,7 +37,6 @@ pub async fn run(app_state: AppState) -> anyhow::Result<()> {
     let config = app_state.config().clone();
 
     let auth_routes = Router::new()
-        .nest("/download", download_routes())
         .nest("/cluster", cluster_routes(app_state.node_state()))
         .nest("/workflow", workflow_routes());
 
