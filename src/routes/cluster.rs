@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use url::Url;
+use utoipa::ToSchema;
+
+const OPENAPI_TAG: &str = "Cluster";
 
 #[cfg(not(debug_assertions))]
 use reqwest::{Client, StatusCode};
@@ -71,22 +74,37 @@ async fn health_check(
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RequestUrl {
+    #[schema(value_type = String)]
     url: Url,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodeResponse {
+    #[schema(value_type = String)]
     pub url: Url,
     pub status: NodeStatus,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodesResponse {
     nodes: Vec<NodeResponse>,
 }
 
+/// Add node
+/// 
+/// Add a single ComfyUI node to cluster using URL.
+#[utoipa::path(
+    post,
+    path = "/cluster/nodes",
+    request_body = RequestUrl,
+    responses((
+        status = OK, description = "Add node successfully.", body = (), 
+    )),
+    security(("basic_auth" = [])),
+    tag = OPENAPI_TAG
+)]
 pub async fn join(
     State(state): State<Arc<AppState>>,
     AppJson(data): AppJson<RequestUrl>,
@@ -105,6 +123,19 @@ pub async fn join(
     Ok(AppJson(()))
 }
 
+/// Remove node
+/// 
+/// Remove a node from cluster using URL.
+#[utoipa::path(
+    post,
+    path = "/cluster/nodes/delete",
+    request_body = RequestUrl,
+    responses((
+        status = OK, description = "Remove node successfully.", body = (), 
+    )),
+    security(("basic_auth" = [])),
+    tag = OPENAPI_TAG
+)]
 pub async fn remove(
     State(state): State<Arc<AppState>>,
     AppJson(data): AppJson<RequestUrl>,
@@ -116,6 +147,18 @@ pub async fn remove(
     Ok(AppJson(()))
 }
 
+/// List nodes
+/// 
+/// List all nodes in cluster.
+#[utoipa::path(
+    get,
+    path = "/cluster/nodes",
+    responses((
+        status = OK, body = NodesResponse,
+    )),
+    security(("basic_auth" = [])),
+    tag = OPENAPI_TAG
+)]
 pub async fn nodes(State(state): State<Arc<AppState>>) -> Result<AppJson<NodesResponse>, AppError> {
     let node_state = state.node_state();
     let node_state = node_state.read().await;

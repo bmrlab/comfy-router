@@ -1,6 +1,6 @@
-mod flux;
-mod sd15;
-mod sdxl;
+pub mod flux;
+pub mod sd15;
+pub mod sdxl;
 
 use super::fetch::{Fetch, FetchHelper};
 use crate::{
@@ -15,23 +15,26 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::watch;
 use url::Url;
+use utoipa::ToSchema;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", content = "name")]
-enum Model {
+pub enum Model {
     BuildIn(String),
+    #[schema(value_type = String, default = String::default)]
     Custom(Url),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", content = "content")]
-enum Image {
+pub enum Image {
     /// not support for now
     Base64(String),
+    #[schema(value_type = String, default = String::default)]
     Url(Url),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ControlNetPayload {
     model: Model,
     weight: f32,
@@ -43,7 +46,7 @@ pub struct ControlNetPayload {
     preprocessor_params: Option<Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct LoRAPayload {
     model: Model,
     weight: f32,
@@ -71,7 +74,7 @@ impl CurrentNodeId {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", content = "params")]
 pub enum WorkflowPayload {
     SD15(SD15WorkflowPayload),

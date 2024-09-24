@@ -10,12 +10,29 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+const OPENAPI_TAG: &str = "Workflow";
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WorkflowResponse {
     id: String,
 }
 
+/// Run workflow
+/// 
+/// Run SD15, SDXL or Flux workflow using predefined params.
+#[utoipa::path(
+    post, 
+    path = "/workflow",
+    request_body(content=WorkflowPayload, content_type="application/json"),
+    responses((
+        status = OK, 
+        body = WorkflowResponse
+    )),
+    security(("basic_auth" = [])),
+    tag = OPENAPI_TAG
+)]
 pub async fn run_workflow(
     State(app_state): State<Arc<AppState>>,
     AppJson(data): AppJson<WorkflowPayload>,
@@ -32,6 +49,23 @@ pub async fn run_workflow(
     Ok(AppJson(WorkflowResponse { id: task_id }))
 }
 
+/// Check workflow
+/// 
+/// Get the full results of a workflow with given id.
+#[utoipa::path(
+    get, 
+    path = "/workflow/{id}", 
+    responses((
+        status = OK, 
+        body = WorkflowResult
+    ), (
+        status = NOT_FOUND,
+        description = "Workflow not found.",
+        body = String
+    )),
+    security(("basic_auth" = [])),
+    tag = OPENAPI_TAG
+)]
 pub async fn check_workflow(
     State(app_state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -46,6 +80,23 @@ pub async fn check_workflow(
     }
 }
 
+/// Get preview
+/// 
+/// Get the preview result of a workflow with given id.
+/// If the workflow has finished, the preview will no longer be available.
+#[utoipa::path(
+    get, 
+    path = "/preview/{id}", 
+    responses((
+        status = OK, 
+        body = WorkflowResult
+    ), (
+        status = NOT_FOUND,
+        description = "Workflow not found.",
+        body = String
+    )),
+    tag = OPENAPI_TAG
+)]
 pub async fn preview_workflow(
     State(app_state): State<Arc<AppState>>,
     Path(id): Path<String>,

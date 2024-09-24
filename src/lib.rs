@@ -10,7 +10,6 @@ use routes::{
     cluster::cluster_routes,
     workflow::{preview_workflow, workflow_routes},
 };
-
 use state::AppState;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tower::{Layer, ServiceBuilder};
@@ -19,6 +18,11 @@ use tower_http::{
     normalize_path::NormalizePathLayer, trace::TraceLayer,
     validate_request::ValidateRequestHeaderLayer,
 };
+use utoipa::{
+    openapi::security::{Http, HttpAuthScheme, SecurityScheme},
+    Modify, OpenApi,
+};
+use utoipa_rapidoc::RapiDoc;
 
 #[cfg(not(debug_assertions))]
 use axum_embed::ServeEmbed;
@@ -30,6 +34,26 @@ use rust_embed::RustEmbed;
 #[cfg(not(debug_assertions))]
 struct AdminWebDist;
 
+#[utoipauto::utoipauto]
+#[derive(OpenApi)]
+#[openapi(
+    modifiers(&SecurityAddon),
+)]
+struct ApiDoc;
+
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "basic_auth",
+                SecurityScheme::Http(Http::new(HttpAuthScheme::Basic)),
+            )
+        }
+    }
+}
+
 pub async fn run(app_state: AppState) -> anyhow::Result<()> {
     #[cfg(not(debug_assertions))]
     let serve_admin_web = ServeEmbed::<AdminWebDist>::new();
@@ -38,7 +62,8 @@ pub async fn run(app_state: AppState) -> anyhow::Result<()> {
 
     let auth_routes = Router::new()
         .nest("/cluster", cluster_routes(app_state.node_state()))
-        .nest("/workflow", workflow_routes());
+        .nest("/workflow", workflow_routes())
+        .merge(RapiDoc::with_openapi("/api-docs/openapi.json", ApiDoc::openapi()).path("/doc"));
 
     #[cfg(not(debug_assertions))]
     let auth_routes = auth_routes.nest_service("/admin", serve_admin_web);

@@ -1,16 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, HashMap};
 use url::Url;
+use utoipa::ToSchema;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
-enum Status {
+pub enum Status {
     Idle,
     Busy,
     Offline,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodeStatus {
     status: Status,
     cache: HashMap<String, String>,

@@ -2,9 +2,10 @@ use super::{ComfyUIPrompt, ControlNetPayload, CurrentNodeId, Image, LoRAPayload,
 use crate::workflow::fetch::FetchHelper;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct SD15WorkflowPayload {
     checkpoint: Model,
     vae: Option<Model>,

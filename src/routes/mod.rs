@@ -8,12 +8,13 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 
 // Create our own JSON extractor by wrapping `axum::Json`. This makes it easy to override the
 // rejection and provide our own which formats errors to match our application.
 //
 // `axum::Json` responds with plain text if the input is invalid.
-#[derive(FromRequest)]
+#[derive(FromRequest, ToSchema)]
 #[from_request(via(axum::Json), rejection(AppError))]
 pub struct AppJson<T>(T);
 
@@ -83,6 +84,15 @@ impl From<WorkflowRecordError> for AppError {
     }
 }
 
+/// Health check
+#[utoipa::path(
+    get,
+    path = "/health_check",
+    responses(
+        (status = OK, description = "Success", body = str, content_type = "text/plain")
+    ),
+    tag = "default"
+)]
 pub async fn health_check() -> &'static str {
     "ok"
 }
